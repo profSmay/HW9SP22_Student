@@ -83,14 +83,14 @@ class MainWindow(qtw.QWidget, Ui_Form):
         if obj == self.Controller.View.scene:
             et=event.type()
             if event.type() == qtc.QEvent.GraphicsSceneMouseMove:
-                w=app.topLevelAt(event.screenPos())
+                w = app.topLevelAt(event.screenPos())
                 scenePos=event.scenePos()
-                s=self.Controller.View.scene.itemAt(scenePos,self.gv_Main.transform())  # gets item from graphics scene under the mouse
+                s  =self.Controller.View.scene.itemAt(scenePos,self.gv_Main.transform())  # gets item from graphics scene under the mouse
                 strScene="Mouse Position:  x = {}, y = {}".format(round(scenePos.x(),2), round(-scenePos.y(),2)) #$NEW$ 4/7/21 flip y
                 if s is not None and s.data(0) is not None:  # when creating nodes and pipes, I used the setData() function to store a name
                     strScene += ' ' + s.data(0)
                 self.lbl_MousePosition.setText(strScene)  # display information in a label
-            if event.type()==qtc.QEvent.GraphicsSceneWheel:  # I added this to zoom on mouse wheel scroll
+            if event.type() == qtc.QEvent.GraphicsSceneWheel:  # I added this to zoom on mouse wheel scroll
                 if event.delta()>0:
                     self.spnd_Zoom.stepUp()
                 else:

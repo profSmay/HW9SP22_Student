@@ -5,6 +5,7 @@ from scipy.optimize import fsolve
 import PyQt5.QtWidgets as qtw
 import PyQt5.QtCore as qtc
 import PyQt5.QtGui as qtg
+import random as rnd
 import os
 
 class nonSortingTreeItem(
@@ -36,13 +37,13 @@ class Fluid:
     def m_to_psi(self, p):
         # convert m of water to psi
         # (m)*(3.3*12in/m)*rho(kg/m^3)*(2.2lb/kg)*(1m/(3.3*12in))^3
-        psi = p * self.rho * 2.2 / ((3.3 * 12) ** 2)
+        psi = UnitConverter.m_to_psi(p, self.rho)  #p * self.rho * 2.2 / ((3.3 * 12) ** 2)
         return psi
 
     def psi_to_m(self, p):
         # convert psi to m of water
         # (lb/in^2)*(1kg/2.2lb)*(3.3*12in/m)^2*(1/rho)(m^3/kg)
-        m = p * (1 / 2.2) * ((3.3 * 12) ** 2) * (1 / self.rho)
+        m = UnitConverter.psi_to_m(p, self.rho)  # p * (1 / 2.2) * ((3.3 * 12) ** 2) * (1 / self.rho)
         return m
 
 # $NEW$ 4/6/21 added a class for position of node
@@ -200,17 +201,157 @@ class Position():
         """
         return 180.0 / math.pi * self.getAngleRad()
 
+class UnitConverter():
+    def __init__(self):
+        """
+        This unit converter class is useful for the pipe network and perhaps other problems.
+        The strategy is (number in current units)*(conversion factor)=(number desired units), for instance:
+            1(ft)*(self.ft_to_m) = 1/3.28084 (m)
+            1(in^2)*(self.in2_to_m2) = 1*(1/(12*3.28084))**2 (m^2)
+        """
+
+    """
+    These constants can be used directly from the class without instantiating an object
+    """
+    #length conversions
+    m_to_ft = 3.28084
+    ft_to_m = 1 / m_to_ft
+    in_to_m = ft_to_m / 12
+    m_to_in = 1 / in_to_m
+
+    #area conversions
+    m2_to_ft2 = m_to_ft**2
+    ft2_to_m2 = ft_to_m ** 2
+    in2_to_m2 = in_to_m ** 2
+    m2_to_in2 = 1 / in2_to_m2
+
+    #volume conversions
+    m3_to_ft3 = m_to_ft**3
+    ft3_to_m3 = ft_to_m ** 3
+    m3_to_ft3=1/ft3_to_m3
+    m3_to_L = 1000
+    ft3_to_L = ft3_to_m3 * m3_to_L
+    L_to_ft3 = 1 / ft3_to_L
+
+    g_SI = 9.80665  # m/s^2
+    g_EN = 32.174  # 32.174 ft/s^2
+    gc_EN = 32.174  # lbm*ft/lbf*s^2
+    gc_SI = 1.0  # kg*m/N*s^2
+
+    #mass/force
+    lbf_to_kg = 1 / 2.20462
+    kg_to_lbf = 1/lbf_to_kg
+    lbf_to_N = lbf_to_kg * g_SI
+
+    #pressure/head
+    pa_to_psi = (1 / (lbf_to_N)) * in2_to_m2
+    kpa_to_psi = 1000*pa_to_psi
+    psi_to_pa = 1/pa_to_psi
+    psi_to_kpa = psi_to_pa/1000
+    bar_to_psi = pa_to_psi*100000
+    mh2o_to_psi = 1000*g_SI*1.0*pa_to_psi #1000(kg/m^3)*9.81(m/s^2)*1(m) -> 9810Pa
+
+    #delta T
+    deltaK_to_deltaR = 9/5*(1.0)
+
+    # Energy
+    BTU_to_J=1055.06
+    kJ_to_BTU = 1000/BTU_to_J
+    BTU_to_kJ = 1/kJ_to_BTU
+    kJperkg_to_BTUperlb = kJ_to_BTU/kg_to_lbf
+    m3perkg_to_ft3perlb = m3_to_ft3/kg_to_lbf
+
+    # Entropy
+    kJperkgK_to_BTUperlbR = kJperkg_to_BTUperlb/deltaK_to_deltaR
+
+    @classmethod  # a classmethod can be used directly from a class without needing to instantiate an object
+    def viscosityEnglishToSI(cls, mu, toSI=True):
+        """
+        Converts between lb*s/ft^2 and Pa*s
+        :param mu: the viscosity in english units
+        :param toSI:  True assumes english in, False assumes SI in
+        :return: the viscosity in Pa*s if toSI=True, lb*s/ft^2 if toSI=False
+        """
+        # (lb*s)/ft^2*((3.3 ft/m)^2)*(1kg/2.2lb)*(9.81m/s^2)->(Pa*s)
+        cf = (1 / cls.ft2_to_m2) * (cls.lbf_to_kg) * cls.g_SI
+        return mu * cf if toSI else mu / cf
+
+    @classmethod  # a classmethod can be used directly from a class without needing to instantiate an object
+    def densityEnglishToSI(cls, rho, toSI=True):
+        """
+        Converts between lb/ft^3 and kg/m^3
+        :param rho: specific weight or density
+        :param toSI:  True assumes english in, False assumes SI in
+        :return: density in SI or EN
+        """
+        # (lb/ft^3)*((3.3ft/m)^3)*(1kg/2.2lb) -> kg/m^3
+        cf = cls.lbf_to_kg / cls.ft3_to_m3
+        return rho * cf if toSI else rho / cf
+
+    @classmethod  # a classmethod can be used directly from a class without needing to instantiate an object
+    def head_to_pressure(cls, h, rho, SI=True):
+        """
+        Convert from height of column of fluid to pressure in consistent units
+        :param h: head in height of fluid (in or m)
+        :return: pressure in (psi or Pa)
+        """
+        if SI:  # p = rho*g*h = g*cf
+            cf = rho * cls.g_SI / cls.gc_SI  # kg*m/m^3*s^2
+            return h * cf
+        else:  # p = rho*g*h = g*cf (h in in)
+            cf = rho * cls.g_EN / cls.gc_EN * (1 / 12) ** 2  # (lbm*ft/ft^3*s^2)(lbf*s^2/lbm*ft)(ft^2/in^2)
+            return h * cf
+        # convert m of water to psi
+        # (m)*(3.3*12in/m)*rho(kg/m^3)*(2.2lb/kg)*(1m/(3.3*12in))^3
+        psi = p * cls.rho * 2.2 / ((3.3 * 12) ** 2)
+        return psi
+
+    @classmethod  # a classmethod can be used directly from a class without needing to instantiate an object
+    def m_to_psi(cls, h, rho):
+        """
+        For converting from height of fluid to psi
+        :param h: height of fluid in m
+        :param rho: density of fluid in kg/m^3
+        :return: pressure in psi
+        """
+        return cls.head_to_pressure(h, rho) * cls.pa_to_psi
+
+    @classmethod  # a classmethod can be used directly from a class without needing to instantiate an object
+    def psi_to_m(cls, p, rho):
+        """
+        For converting from psi to height of fluid.
+        first convert psi to pa
+        :param p: pressure in psi
+        :param rho: density of fluid in kg/m^3
+        :return: height of fluid in m
+        """
+        pa = p / cls.pa_to_psi
+        h = pa / (rho * cls.g_SI)
+        return h
+
+    @classmethod # a classmethod can be used directly from a class without needing to instantiate an object
+    def C_to_F(cls, T=0):
+        return 9/5*(T)+32
+
+    @classmethod # a classmethod can be used directly from a class without needing to instantiate an object
+    def F_to_C(cls, T=0):
+        return 5/9*(T-32)
+
+    @classmethod # a classmethod can be used directly from a class without needing to instantiate an object
+    def K_to_R(cls, T=0):
+        return cls.C_to_F(T-273.15)+459.67
+
 class units():
     def __init__(self, SI=True):
         self.set(SI)
         # conversion factors CF*SI=Eng
-        self.CFFlowRate = 1.0 / 28.3168  # L/s to cfs
-        self.CFLength = 3.3  # m to ft
-        self.CFDiameter = 1000.0 / 25.4  # m to in
-        self.CFPressure = (1000.0 / 25.4) / 27.7076  # m H20 to psi
-        self.CFHeadLoss = 3.3 * 12.0  # m to in
-        self.CFHead = 3.3 * 12.0  # m to in
-        self.CFRough = 3.3 * 12.0  # m to in
+        self.CFFlowRate = UnitConverter.L_to_ft3 # 1.0 / 28.3168  # L/s to cfs
+        self.CFLength = UnitConverter.m_to_ft  # m to ft
+        self.CFDiameter = UnitConverter.m_to_in  # m to in
+        self.CFPressure = UnitConverter.mh2o_to_psi #1000.0 / 25.4) / 27.7076  # m H20 to psi
+        self.CFHeadLoss = UnitConverter.m_to_in  # m to in
+        self.CFHead = UnitConverter.m_to_in  # m to in
+        self.CFRough = UnitConverter.m_to_in  # m to in
 
     def set(self, SI=True):
         if SI:
@@ -246,9 +387,9 @@ class Node:  # $NEW$ 4/6/21 got rid of z and added position variable
         """
         self.Name = name if oldnode is None else oldnode.getName()
         self.Pipes = pipes if oldnode is None else oldnode.Pipes
-        self.E = 0.0 if oldnode is None else oldnode.E
-        self.E = ext_flow if ext_flow is not None else self.E
-        self.P = 0.0  # the pressure head at the node in m of fluid
+        self.ExtFlow = 0.0 if oldnode is None else oldnode.ExtFlow
+        self.ExtFlow = ext_flow if ext_flow is not None else self.ExtFlow
+        self.P_Head = 0.0  # the pressure head at the node in m of fluid
         self.Loops = None
         self.SpecifiedP = 0.0 if oldnode is None else oldnode.SpecifiedP
         self.SpecifiedP = specifiedP if specifiedP is not None else self.SpecifiedP
@@ -266,7 +407,7 @@ class Node:  # $NEW$ 4/6/21 got rid of z and added position variable
         Calculates the net flow rate into this node in L/s
         :return:
         """
-        Qtot = self.E  # count the external flow first
+        Qtot = self.ExtFlow  # count the external flow first
         for p in self.Pipes:
             # retrieves the pipe flow rate (+) if into node (-) if out of node.  see class for pipe.
             Qtot += p.getFlowIntoNode(self.Name)
@@ -281,7 +422,7 @@ class Node:  # $NEW$ 4/6/21 got rid of z and added position variable
         if not pipes == None:
             self.Pipes = pipes
         if not ext_flow == None:
-            self.E = ext_flow
+            self.ExtFlow = ext_flow
         if not position == None:
             self.position = position
         if not specifiedP == None:
@@ -291,7 +432,7 @@ class Node:  # $NEW$ 4/6/21 got rid of z and added position variable
 
     def setExtFlow(self, E, SI=True):
         # (ft^3/s)*(1m/3.3ft)^3*(1000L/m^3)->L/s
-        self.E = E if SI else 1000 * E * (1 / 3.3) ** 3
+        self.ExtFlow = E if SI else 1000 * E * (1 / 3.3) ** 3
 
 class SprinklerHead(Node):  # $NEW$ 4/6/21 Like Node class, I added position as an argument and got rid of z.
     def __init__(self, name=None, pipes=None, ext_flow=None, position=None, specifiedP=None, min_ph=None, k=None,
@@ -314,8 +455,8 @@ class SprinklerHead(Node):  # $NEW$ 4/6/21 Like Node class, I added position as 
             # run parent constructor
             super().__init__(name=name, pipes=pipes, ext_flow=ext_flow, position=position, specifiedP=specifiedP,
                              min_ph=min_ph)
-        self.E = ext_flow if ext_flow is not None else self.E
-        self.setExtFlow(self.E, SI)
+        self.ExtFlow = ext_flow if ext_flow is not None else self.ExtFlow
+        self.setExtFlow(self.ExtFlow, SI)
         self.position = position if position is not None else self.position
         self.fitting = fitting if fitting is not None else self.fitting
         self.minPH = min_ph if min_ph is not None else 2
@@ -325,12 +466,12 @@ class SprinklerHead(Node):  # $NEW$ 4/6/21 Like Node class, I added position as 
         self.IsSprinkler = True
 
     def calc_k(self):  # calculate sprinkler discharge coefficient
-        self.K = abs(self.E / math.sqrt(self.P))
+        self.K = abs(self.ExtFlow / math.sqrt(self.P_Head))
         return self.K
 
     def calc_q(self):  # calculate outflow of sprinkler.  Warning: P should be positive to avoid error.
-        self.E = self.K * math.sqrt(self.P)
-        return self.E
+        self.ExtFlow = self.K * math.sqrt(self.P_Head)
+        return self.ExtFlow
 
 class Pipe:
     def __init__(self, start='A', end='B', length=100.0, dia=200.0, roughness=0.00025, fluid=Fluid()):
@@ -355,6 +496,7 @@ class Pipe:
         self.fluid = fluid  # the fluid in the pipe
         self.vel = self.v()  # calculate the initial velocity of the fluid
         self.reynolds = self.Re()  # calculate the initial reynolds number
+        self.ff=self.FrictionFactor()
 
     def setDiam(self, dia):
         self.diam = dia / 1000.0  # pipe diameter in (m)
@@ -408,26 +550,34 @@ class Pipe:
             Note1: if 2000<Re<3000, I will linearly interpolate between the laminar and Blasius values
             Note2:  math.log is natural log, math.log10 is base 10 log
         """
-        Re = self.Re()
-        if Re <= 2000.0:  # use laminar flow equation
-            f = self.LaminarFrictionFactor(Re)
-        elif Re > 2000.0 and Re < 3000.0:  # linear interpolation between laminar and Blasius
-            x = (Re - 2000.0) / (1000.0)
-            fl = self.LaminarFrictionFactor(Re)
-            fb = self.BlasiusFrictionFactor(Re)
-            f = fl + x * (fb - fl)
-        elif Re >= 3000 and Re <= 4000:  # use Blasius equation
-            f = self.BlasiusFrictionFactor(Re)
-        else:  # use Colebrook equation for fully turbulent flow
-            f = self.ColebrookFrictionFactor(Re)
-        return f
+        """
+        This function calculates the friction factor for a pipe based on the
+        notion of laminar, turbulent and transitional flow.
+        :return: the (Darcy) friction factor
+        """
+        # update the Reynolds number and make a local variable Re
+        Re=self.Re()
+        if Re >= 4000:  # true for turbulent flow
+            return self.ColebrookFrictionFactor(Re)
+        if Re <= 2000:  # true for laminar flow
+            return self.LaminarFrictionFactor(Re)
+
+        # transition flow is ambiguous, so use normal variate weighted by Re
+        CBff = self.ColebrookFrictionFactor(Re)
+        Lamff = self.LaminarFrictionFactor(Re)
+        # I assume laminar is more accurate when just above 2000 and CB more accurate when just below Re 4000.
+        # I will weight the mean appropriately using a linear interpolation.
+        mean = Lamff+((Re-2000)/(4000-2000))*(CBff - Lamff)
+        sig = 0.2 * mean
+        # Now, use normalvariate to put some randomness in the choice
+        return rnd.normalvariate(mean, sig)
 
     def FlowHeadLoss(self):
         """
         Use the Darcy-Weisbach equation to find the frictional head loss through a section of pipe.
         """
         g = 9.81  # m/s^2
-        ff = self.FrictionFactor()
+        ff = self.ff = self.FrictionFactor()
         hl = ff * (self.length / self.diam) * (self.v() ** 2) / (2 * g)  # m of water
         return hl
 
@@ -526,7 +676,7 @@ class Loop():
         deltaP = 0  # initialize loop pressure drop to zero
         sn_n = self.pipes[0].startNode  # name of node at the start of the first pipe
         sn_o = self.getNode(nodes, sn_n)  # get the stating node object
-        ph = sn_o.P  # pressure head at startNode
+        ph = sn_o.P_Head  # pressure head at startNode
         for p in self.pipes:
             # calculates the flow head loss in the pipe considering loop traversal and flow directions
             phl = p.getFlowHeadLoss(sn_n)
@@ -541,7 +691,7 @@ class Loop():
             # calc pressure head at end node
             ph -= (phl + deltaZ)
             # set pressure head at end node
-            nn_o.P = ph
+            nn_o.P_Head = ph
             # set ns node object to ne node object
             sn_o = nn_o
             # set start node (name) to the next node (name)
@@ -687,8 +837,8 @@ class PipeNetwork():
         netOut = 0
         for n in self.nodes:
             if n.IsSprinkler:
-                n.E = -1.0 * n.K * math.sqrt(n.P)
-            netOut += n.E
+                n.ExtFlow = -1.0 * n.K * math.sqrt(n.P_Head)
+            netOut += n.ExtFlow
         return [netOut]
 
     def getNodeFlowRates(self):
@@ -699,7 +849,7 @@ class PipeNetwork():
     def getLoopHeadLosses(self):
         # each loop object is responsible for calculating its own net head loss
         for N in self.nodes:
-            N.P = 0
+            N.P_Head = 0
         lhl = [l.getLoopHeadLoss(self.nodes) for l in self.loops]
         return lhl
 
@@ -716,7 +866,7 @@ class PipeNetwork():
                 nno = self.getNode(nnn)
                 # n.P+ehl+fhl=nno.P -> n.P=nno.P-ehl-fhl
                 ehl = z - nno.position.z  # head loss due to elevation change
-                n.P = nno.P - fhl - ehl  # pressure at the non-loop node
+                n.P_Head = nno.P_Head - fhl - ehl  # pressure at the non-loop node
 
     def setMinNodePressureHead(self, minPH, calcK=True):
         """
@@ -729,19 +879,19 @@ class PipeNetwork():
         delta = minPH  # calculate how much we need to up the pressure head at the pump
         for n in self.nodes:  # look for minimum sprinkler pressure head
             if n.IsSprinkler:
-                delta = max(delta, n.MinPH - n.P)
+                delta = max(delta, n.MinPH - n.P_Head)
             elif n.SpecifiedP > 0.0:
-                delta = max(delta, n.SpecifiedP - n.P)
+                delta = max(delta, n.SpecifiedP - n.P_Head)
         # dial up the pump pressure/node pressure
         for n in self.nodes:
-            n.P += delta
+            n.P_Head += delta
             if n.IsSprinkler and calcK:  # if called for, calculate discharge coefficient of sprinklers
                 n.calc_k()
 
     def setRefPressure(self, RefP=0.0, nodeName='a'):
-        deltaP = RefP - self.getNode(nodeName).P
+        deltaP = RefP - self.getNode(nodeName).P_Head
         for n in self.nodes:
-            n.P += deltaP
+            n.P_Head += deltaP
 
     def recalcPipeLengths(self):
         """
@@ -844,6 +994,27 @@ class PipeNetworkController():
 
         self.updateView()
 
+    def CalculateSystemCurve(self):
+        """
+        The 'system curve' is calculated based on the idea that the sprinkler discharge coefficients are fixed and we
+        want to measure the head vs. flow rate for the system.  Here is how I think I should proceede:
+        Step 1.  Have user simulate the desired flow conditions for the pipe network by setting the setting the head at
+        the inlet node along with the flow rate, the minimum head and flow rates at the sprinklers, and then find the
+        k-values for the sprinklers.
+        Step 2.  With the k-values set, vary the inlet flow rate and calculate the flow rates at the sprinkler heads and
+        the required head at the inlet.  That is, if I increase Q, I should see an increase in the required head and the
+        flow rates at each of the sprinklers increases as well.  If I decrease Q, I should see a decrease in the
+        required head and a decrease in the flow rate at the sprinklers.
+
+        Notes:
+            1. With sprinkler k-values fixed, I still must have mass conservation for the network as a whole.
+            2. The loop equations still must yield zero pressure loss.
+            3. Every node equation must maintain mass conservation.
+        """
+
+        pass
+
+
     def setUnits(self):
         self.Model.SI = self.rdo_SI.isChecked()
         self.Model.units.set(self.Model.SI)
@@ -890,7 +1061,7 @@ class PipeNetworkController():
 
     def deletePipe(self):
         PN = self.Model
-        table = self.View.tablePipes
+        table = self.View.table_Pipes
         row = table.currentRow()
         name = table.item(row, 0).text()
         if PN.hasPipe(name):
@@ -917,7 +1088,7 @@ class PipeNetworkController():
         """
         This one modifies (typical) or creates a pipe in the pipe network from the pipe table of the gui.
         """
-        table = self.View.tablePipes
+        table = self.View.table_Pipes
         PN = self.Model  # short name for the model
         # get conversion factors for later
         cfLen = 1.0 if PN.SI else PN.units.CFLength
@@ -1032,7 +1203,7 @@ class PipeNetworkController():
         N.position.set(tupXYZ=(float(x), float(y), float(z)))
         # do unit conversions if needed
         N.position = round(N.position / cfLen, 2)
-        N.E = round(N.E / cfQ, 2)
+        N.ExtFlow = round(N.ExtFlow / cfQ, 2)
         N.SpecifiedP = round(N.SpecifiedP / cfP, 3)
         N.MinPH = round(N.MinPH / cfP, 3)
         N.Pipes = PN.getNodePipes(N.getName())
@@ -1215,7 +1386,7 @@ class PipeNetworkController():
             elif cells[0].lower().find('sprinkler') >= 0:
                 isSprinkler = cells[1].strip().lower() == 'true'
             elif cells[0].lower().find('ext') >= 0:
-                N.E = float(cells[1].strip())
+                N.ExtFlow = float(cells[1].strip())
             elif cells[0].lower().find('minp') >= 0:
                 N.MinPH = float(cells[1].strip())
             elif cells[0].lower().find('specified') >= 0:
@@ -1230,7 +1401,7 @@ class PipeNetworkController():
             N.Pipes = PN.getNodePipes(N.Name)
             PN.nodes.append(N)
         else:
-            PN.getNode(N.Name).modifyNode(ext_flow=N.E, position=N.position, specifiedP=N.SpecifiedP, min_ph=N.MinPH)
+            PN.getNode(N.Name).modifyNode(ext_flow=N.ExtFlow, position=N.position, specifiedP=N.SpecifiedP, min_ph=N.MinPH)
         if isSprinkler:  # may need to convert a node to a sprinkler head
             if PN.getNode(N.Name).IsSprinkler == False:
                 n = PN.getNodeIndex(N.Name)
@@ -1362,7 +1533,7 @@ class PipeNetworkView():
             x = "{:0.2f}".format(n.position.x if PN.SI else n.position.x * PN.units.CFLength)
             y = "{:0.2f}".format(n.position.y if PN.SI else n.position.y * PN.units.CFLength)
             z = "{:0.2f}".format(n.position.z if PN.SI else n.position.z * PN.units.CFLength)
-            Q = "{:0.3f}".format(n.E if PN.SI else n.E * PN.units.CFFlowRate)
+            Q = "{:0.3f}".format(n.ExtFlow if PN.SI else n.ExtFlow * PN.units.CFFlowRate)
             type = n.fitting.type
             minPH = "{:0.2f}".format(n.MinPH if PN.SI else n.MinPH * PN.units.CFPressure)
             pSpec = "{:0.2f}".format(n.SpecifiedP if PN.SI else n.SpecifiedP * PN.units.CFPressure)
@@ -1519,11 +1690,11 @@ class PipeNetworkView():
             q_units = PN.units.FlowRate
             p_units = PN.units.Pressure
             tooltip = 'Node {}: {} \n'.format(n.getName(), n.fitting.type)
-            p = n.P if PN.SI else PN.units.CFPressure * n.P
+            p = n.P_Head if PN.SI else PN.units.CFPressure * n.P_Head
             if n.IsSprinkler:
                 tooltip += 'K = {:0.2f}\n'.format(n.K)
-            if n.E is not None and n.E != 0.0:
-                Q = n.E if PN.SI else n.E * PN.units.CFFlowRate
+            if n.ExtFlow is not None and n.ExtFlow != 0.0:
+                Q = n.ExtFlow if PN.SI else n.ExtFlow * PN.units.CFFlowRate
                 tooltip += 'Qin = {:0.2f} ({})\n'.format(Q, q_units)
             tooltip += 'P = {:0.3f} ({})'.format(p, p_units)
 
@@ -1531,7 +1702,7 @@ class PipeNetworkView():
                              tooltip=tooltip)
             self.drawALabel(x - 15, y + 15, str=n.getName(), pen=penNodeLabel)
             # region add arrows for external flows $NEW$ 4/7/21
-            if n.E is not None and n.E != 0.0:
+            if n.ExtFlow is not None and n.ExtFlow != 0.0:
                 unitVec = self.AngleForExtFlowArrow(n,
                                                     PN=PN)  # resultant of unit vector for all pipes connected to node
                 if unitVec.mag() <= 0.0:
@@ -1540,9 +1711,9 @@ class PipeNetworkView():
                 a = n.position  # arrow start point
                 b = a - 45.0 * unitVec  # arrow end point
                 c = b - 30.0 * unitVec  # label position
-                Q = n.E if PN.SI else n.E * PN.units.CFFlowRate
+                Q = n.ExtFlow if PN.SI else n.ExtFlow * PN.units.CFFlowRate
                 q_units = PN.units.FlowRate
-                self.drawAnArrow(startX=a.x, startY=a.y, endX=b.x, endY=b.y, stArrow=(n.E > 0.0), endArrow=(n.E < 0.0),
+                self.drawAnArrow(startX=a.x, startY=a.y, endX=b.x, endY=b.y, stArrow=(n.ExtFlow > 0.0), endArrow=(n.ExtFlow < 0.0),
                                  pen=penNode, brush=brushArrowHead)
                 self.drawALabel(x=c.x, y=c.y, str='{:0.2f} {}'.format(abs(Q), q_units), pen=penExtFlow)
             # endregion
@@ -1602,7 +1773,8 @@ class PipeNetworkView():
             st += p.getPipeFlowRateOutput(tooltip=True, SI=PN.SI, units=PN.units) + '\n'
             p_units = PN.units.Head
             hl = p.FlowHeadLoss() if PN.SI else PN.units.CFHead * p.FlowHeadLoss()
-            st += 'HL = {:0.3f} {}'.format(hl, p_units)
+            st += 'HL = {:0.3f} {}\n'.format(hl, p_units)
+            st += 'Re = {:0.0f}, ff = {:0.4f}'.format(p.reynolds, p.ff)
             # assign tool tip string
             line.setToolTip(st)
             line.setPen(penPipe)
@@ -1779,12 +1951,12 @@ class PipeNetworkView():
 
     def printNodeHead(self, PN=None):
         for N in PN.nodes:
-            p = N.P if PN.SI else PN.units.CFPressure * N.P
+            p = N.P_Head if PN.SI else PN.units.CFPressure * N.P_Head
             p_units = PN.units.Pressure
             z_units = PN.units.Length
             z = N.position.z if PN.SI else PN.units.CFLength * N.position.z
             q_units = PN.units.FlowRate
-            Q = N.E if PN.SI else PN.units.CFFlowRate * N.E
+            Q = N.ExtFlow if PN.SI else PN.units.CFFlowRate * N.ExtFlow
             if N.IsSprinkler:
                 print('PH at sprinkler {} (Z={:0.2f} {}) = {:0.2f} {} (K={:0.2f}, Q={:0.2f} {}})'.format(N.Name, z,
                                                                                                          z_units, p,
@@ -1908,11 +2080,11 @@ class PipeNetworkView():
         lbl = self.lbl_NodePressures
         stOut = 'Node Pressures\n'
         for N in PN.nodes:
-            p = N.P if PN.SI else PN.units.CFPressure * N.P
+            p = N.P_Head if PN.SI else PN.units.CFPressure * N.P_Head
             p_units = PN.units.Pressure
             z_units = PN.units.Length
             z = N.position.z if PN.SI else PN.units.CFLength * N.position.z
-            Q = N.E if PN.SI else PN.units.CFFlowRate * N.E
+            Q = N.ExtFlow if PN.SI else PN.units.CFFlowRate * N.ExtFlow
             Q_units = PN.units.FlowRate
             if N.IsSprinkler:
                 stOut += tabs + 'PH at sprinkler {} (Z={:0.2f} {}) = {:0.2f} {} (K={:0.2f}, Q={:0.2f} {}})'.format(
@@ -1935,10 +2107,10 @@ class PipeNetworkView():
         rows = table.rowCount()
         for i in range(rows):
             N = PN.getNode(table.item(i, 0).text())  # get node name from table
-            p = N.P if PN.SI else PN.units.CFPressure * N.P
+            p = N.P_Head if PN.SI else PN.units.CFPressure * N.P_Head
             z = N.position.z
             z = z if PN.SI else PN.units.CFLength * z
-            Q = N.E if PN.SI else PN.units.CFFlowRate * N.E
+            Q = N.ExtFlow if PN.SI else PN.units.CFFlowRate * N.ExtFlow
             if N.IsSprinkler:
                 stOut += tabs + '{} (Z={:0.2f}{}) -> {:0.2f} (K={:0.2f}, Q={:0.2f} {})'.format(
                     N.getName(), z, z_units, p, N.K, abs(Q), q_units) + '\n'
@@ -1999,10 +2171,10 @@ class PipeNetworkView():
             stTmp += '\n'
             stTmp += '</Loop>\n'
         for n in PN.nodes:
-            if n.E > 0.0 or n.E < 0.0:
+            if n.ExtFlow > 0.0 or n.ExtFlow < 0.0:
                 stTmp += '<Node>\n'
                 stTmp += '\tName: {}\n'.format(n.getName())
-                stTmp += '\tExternal Flow: {:0.1f}\n'.format(n.E)
+                stTmp += '\tExternal Flow: {:0.1f}\n'.format(n.ExtFlow)
                 stTmp += '\tMinP: {}\n'.format(n.MinPH) if n.IsSprinkler else ''
                 stTmp += '\tSprinkler: True\n' if n.IsSprinkler else ''
                 stTmp += '</Node>\n'
@@ -2057,10 +2229,10 @@ class PipeNetworkView():
             stTmp += '</Loop>\n'
         for i in range(tableN.topLevelItemCount()):
             n = PN.getNode(tableN.topLevelItem(i).text(0))
-            if n.E > 0.0 or n.E < 0.0:
+            if n.ExtFlow > 0.0 or n.ExtFlow < 0.0:
                 stTmp += '<Node>\n'
                 stTmp += '\tName: {}\n'.format(n.getName())
-                stTmp += '\tExternal Flow: {:0.1f}\n'.format(n.E)
+                stTmp += '\tExternal Flow: {:0.1f}\n'.format(n.ExtFlow)
                 stTmp += '\tMinP: {}\n'.format(n.MinPH) if n.IsSprinkler else ''
                 stTmp += '\tSprinkler: True\n' if n.IsSprinkler else ''
                 stTmp += '</Node>\n'
@@ -2125,7 +2297,7 @@ class PipeNetworkView():
             stTmp += '\tName: {}\n'.format(n.getName())
             stTmp += '\tPosition: {}\n'.format(n.position.getStr())
             stTmp += '\tFitting:  {}\n'.format(n.fitting.type)
-            stTmp += '\tExternal Flow: {:0.2f}\n'.format(n.E)
+            stTmp += '\tExternal Flow: {:0.2f}\n'.format(n.ExtFlow)
             stTmp += '\tMinP: {:0.3f}\n'.format(n.MinPH) if n.IsSprinkler else ''
             stTmp += '\tSpecifiedP: {:0.3f}\n'.format(n.SpecifiedP) if n.SpecifiedP > 0.0 else ''
             stTmp += '\tSprinkler: True\n' if n.IsSprinkler else ''
