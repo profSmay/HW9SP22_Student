@@ -236,7 +236,34 @@ class TrussController():
         Reading Links:
         The links should come after the nodes.  Each link has a name and two node names.  See method addLink
         """
-        #$JES MISSING CODE HERE$
+
+        self.truss=TrussModel()  # make a new truss to receive the data
+
+        for l in data:  # analyze the lines of data
+            # I notice that the important lines are comma delimited
+            cells = l.split(',')  # First, split into cells based on commas
+            keyword=cells[0].lower().strip()
+            if keyword == 'title':
+                self.truss.title=cells[1].replace("'", "").strip()
+            elif keyword == 'material':
+                self.truss.material.uts=float(cells[1])
+                self.truss.material.ys=float(cells[2])
+                self.truss.material.E=float(cells[3])
+            elif keyword == 'static_factor':
+                self.truss.material.staticFactor=float(cells[1])
+            elif keyword == 'node':
+                n = Node()  #create a new node object
+                n.name = cells[1].strip()
+                n.position.x = float(cells[2])
+                n.position.y = float(cells[3])
+                if not self.hasNode(n.name):   # ensure no duplicate nodes
+                    self.truss.nodes.append(n)
+            elif keyword == 'link':
+                l = Link()
+                l.name = cells[1].strip()
+                l.node1_Name = cells[2].strip()
+                l.node2_Name = cells[3].strip()
+                self.truss.links.append(l)
 
         self.calcLinkVals()
         self.displayReport()
@@ -330,7 +357,7 @@ class TrussView():
         st+='Static Factor of Safety:  {:0.2f}\n'.format(truss.material.staticFactor)
         st+='Ultimate Strength:  {:0.2f}\n'.format(truss.material.uts)
         st+='Yield Strength:  {:0.2f}\n'.format(truss.material.ys)
-        st+='Modulus of Elasticity:  {:0.2f}\n'.format(truss.material.ExtFlow)
+        st+='Modulus of Elasticity:  {:0.2f}\n'.format(truss.material.E)
         st+='_____________Link Summary________________\n'
         st+='Link\t(1)\t(2)\tLength\tAngle\n'
         longest=None
@@ -345,29 +372,39 @@ class TrussView():
         self.le_LongLinkNode2.setText(longest.node2_Name)
     
     def buildScene(self, truss=None):
-        #Create a QRect() object to help with drawing the background grid.
-        rect=qtc.QRect()
+        """
+        build the scene for displaying the truss schematic
+        Step 1:  create a defining rectangle that contains all the artwork
+        Step 2:  draw a grid
+        Step 3:  draw the links
+        Step 4:  draw the nodes and labels
+        """
+        #Step 1:
+        rect = qtc.QRect()
         rect.setTop(truss.nodes[0].position.y)
         rect.setLeft(truss.nodes[0].position.x)
         rect.setHeight(0)
         rect.setWidth(0)
+        #scan through all the nodes and expand rectangle as needed
         for n in truss.nodes:
-            if n.position.y>rect.top(): rect.setTop(n.position.y)
-            if n.position.y<rect.bottom(): rect.setBottom(n.position.y)
-            if n.position.x>rect.right(): rect.setRight(n.position.x)
-            if n.position.x<rect.left(): rect.setLeft(n.position.x)
-        rect.adjust(-50,50,50,-50)
+            if n.position.y > rect.top(): rect.setTop(n.position.y)
+            if n.position.y < rect.bottom(): rect.setBottom(n.position.y)
+            if n.position.x > rect.right(): rect.setRight(n.position.x)
+            if n.position.x < rect.left(): rect.setLeft(n.position.x)
+        rect.adjust(-50, 50, 50, -50)  # expands the rectangle a little more so there is a boarder
 
-        # clear out the old scene first
+        # clear out the old scene
         self.scene.clear()
 
-        # draw a grid
-        self.drawAGrid(DeltaX=10, DeltaY=10, Height=abs(rect.height()), Width=abs(rect.width()), CenterX=rect.center().x(), CenterY=rect.center().y())
-        # draw the truss
+        # Step 2: draw a grid
+        self.drawAGrid(DeltaX=10, DeltaY=10, Height=abs(rect.height()), Width=abs(rect.width()),
+                       CenterX=rect.center().x(), CenterY=rect.center().y())
+        # Step 3:  draw the links
         self.drawLinks(truss=truss)
+        # Step 4:  draw the nodes
         self.drawNodes(truss=truss)
 
-    def drawAGrid(self, DeltaX=10, DeltaY=10, Height=320, Width=180, CenterX=120, CenterY=60):
+    def drawAGrid(self, DeltaX=10, DeltaY=10, Height=320, Width=180, CenterX=120, CenterY=60, pen=None, brush=None):
         """
         This makes a grid for reference.  No snapping to grid enabled.
         :param DeltaX: grid spacing in x direction
@@ -380,23 +417,111 @@ class TrussView():
         :param Brush: brush for background
         :return: nothing
         """
-        #JES MISSING CODE HERE$
-        pass
+        pen=self.penGridLines if pen is None else pen
+        Brush=self.brushGrid if brush is None else brush
+        height = Height
+        width = Width
+        left = CenterX - width / 2.0
+        right = CenterX + width / 2.0
+        top = CenterY + height / 2.0
+        bottom = CenterY - height / 2.0
+        Dx = DeltaX
+        Dy = DeltaY
+
+        # make the background rectangle first
+        if Brush is not None:
+            rect = qtw.QGraphicsRectItem(left, -top, width, height)  # recall y is upside down
+            rect.setBrush(Brush)
+            rect.setPen(pen)
+            self.scene.addItem(rect)
+        # draw the vertical grid lines
+        x = left
+        while x <= right:
+            lVert = qtw.QGraphicsLineItem(x, -top, x, -bottom)
+            lVert.setPen(pen)
+            self.scene.addItem(lVert)
+            x += Dx
+        # draw the horizontal grid lines
+        y = bottom
+        while y <= top:
+            lHor = qtw.QGraphicsLineItem(left, -y, right, -y) #now flip y
+            lHor.setPen(pen)
+            self.scene.addItem(lHor)
+            y += Dy
 
     def drawLinks(self, truss=None):
-       #$JES MISSING CODE HERE$
-        pass
+        scene = self.scene
+        penLink = self.penLink
+        for l in truss.links:
+            n1 = truss.getNode(l.node1_Name)
+            n2 = truss.getNode(l.node2_Name)
+
+            x1 = n1.position.x
+            y1 = n1.position.y
+            x2 = n2.position.x
+            y2 = n2.position.y
+            line = qtw.QGraphicsLineItem(x1, -y1, x2, -y2)  # $NEW$ 4/7/21 flip y axis
+
+            st = 'link: ' + l.name + '\n'
+            st += 'length = {:0.2f}\n'.format(l.length)
+            st += 'angle deg = {:0.2f}'.format(l.angleRad * 180.0 / math.pi)
+            # assign tool tip string
+            line.setToolTip(st)
+            line.setPen(self.penLink)
+            # add pipe to scene
+            scene.addItem(line)
 
     def drawNodes(self, truss=None, scene=None):
-        #$JES MISSING CODE HERE$
-        pass
+        if scene is None:
+            scene = self.scene
+        penNode = self.penNode
+        brushNode = self.brushNode
+        penNodeOutline = qtg.QPen() if penNode is None else penNode
+        penNodeLabel = qtg.QPen(qtc.Qt.darkMagenta)
+        for n in truss.nodes:
+            x = n.position.x
+            y = n.position.y
+            tooltip='node: {}\nx={:0.1f}, y={:0.1f}'.format(n.name,n.position.x, n.position.y)
+            self.drawACircle(x, y, 7, brush=brushNode, pen=penNodeOutline, name=('node: ' + n.name),tooltip=tooltip )
+            self.drawALabel(x - 15, y + 15, str=n.name, pen=penNodeLabel)
 
-    def drawALabel(self, x,y,str='', pen=None, brush=None, tip=None):
-        #$JES MISSING CODE HERE$
-        pass
+    def drawALabel(self, x, y, str='', pen=None, brush=None, tip=None):
+        """
+        I've decided that x,y are the center of the label.  Find corner based on label width and height.
+        """
+        scene = self.scene
+        lbl = qtw.QGraphicsTextItem(str)
+        w = lbl.boundingRect().width()
+        h = lbl.boundingRect().height()
+        lbl.setX(x - w / 2.0)
+        lbl.setY(-y - h / 2.0)
+        if tip is not None:
+            lbl.setToolTip(tip)
+        if pen is not None:
+            lbl.setDefaultTextColor(pen.color())
+        if brush is not None:
+            # this makes a nice background
+            bkg = qtw.QGraphicsRectItem(lbl.x(), lbl.y(), w, h)
+            bkg.setBrush(brush)
+            outlinePen = qtg.QPen(brush.color())
+            bkg.setPen(outlinePen)
+            scene.addItem(bkg)
+        scene.addItem(lbl)
 
     def drawACircle(self, centerX, centerY, Radius, angle=0, brush=None, pen=None, name=None, tooltip=None):
-        # $JES MISSING CODE HERE
-        pass
+        scene = self.scene
+        # ellipse = qtw.QGraphicsEllipseItem(centerX - Radius, centerY - Radius, 2 * Radius, 2 * Radius)
+        ellipse = qtw.QGraphicsEllipseItem(centerX - Radius, -1.0 * (centerY + Radius), 2 * Radius,
+                                           2 * Radius)  # $NEW$ 4/7/21 flip y
+        if pen is not None:
+            ellipse.setPen(pen)
+        if brush is not None:
+            ellipse.setBrush(brush)
+        if name is not None:
+            ellipse.setData(0, name)
+        if tooltip is not None:
+            ellipse.setToolTip(tooltip)
+        scene.addItem(ellipse)
+
 
 

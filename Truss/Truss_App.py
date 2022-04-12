@@ -2,7 +2,7 @@ from Truss_GUI import Ui_TrussStructuralDesign
 from PyQt5 import QtWidgets as qtw
 from PyQt5 import QtCore as qtc
 from PyQt5 import QtGui as qtg
-from Truss_stem import TrussController
+from Truss_work import TrussController
 import sys
 
 class MainWindow(Ui_TrussStructuralDesign,qtw.QWidget):
